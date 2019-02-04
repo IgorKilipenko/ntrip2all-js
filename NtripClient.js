@@ -1,15 +1,17 @@
 import http from 'http';
+import EventEmitter from 'events';
 
-export default class NtripClient {
+export default class NtripClient extends EventEmitter {
     constructor({ host, port, mountpoint, user, password, proxyserver, proxyport, mode = 'NTRIP2' } = {}) {
+        super();
         console.assert(host && port && mountpoint, 'NtripClient {arg: options} error', arguments[0]);
 
         this.req = null;
         this._connect = false;
-        this.keepAliveAgent = new http.Agent({ keepAlive: true });
+        this.agent = new http.Agent({ keepAlive: false });
 
         this.options = {
-            agent: this.keepAliveAgent,
+            agent: this.agent,
             method: 'GET',
             headers: {},
             host,
@@ -49,77 +51,74 @@ export default class NtripClient {
     }
 
     get isConnected() {
-        return this.req && this.req.finished;
+        return this.req;
     }
 
     getInfo = () => {
-        return new Promise((reslove, reject) => {
+        return new Promise(async (reslove, reject) => {
             this.req = http.request(this.options);
             this.req.end();
 
-            this.req.once('response', (res) => {
+            this.req.on('error', async err => {
+                await this.abort();
+                reject(err);
+            });
+
+            this.req.once('response', async res => {
                 const { statusCode, headers } = res;
-                this.abort();
-                setTimeout(() => {
-                    reslove({ statusCode, headers });
-                }, 1000);
-                
+                console.log(this.req);
+                await this.abort();
+                reslove({ statusCode, headers });
             });
 
-            this.req.on('error', e => {
-                this.abort();
-                reject(e);
-            });
 
-            
-        });
-    };
-
-    connect = () => {
-        return new Promise((reslove, reject) => {
-            this.req = http.request(this.options);
-            this.req.on('connect', res => {
-                console.log('!!!CONNECTED');
-                reslove(this);
-            });
         });
     };
 
     request = callback => {
-        return new Promise((reslove, reject) => {
-            console.log('Start req', this.options);
+        return new Promise(async (reslove, reject) => {
             this.req = http.request(this.options, res => {
                 this.req.setNoDelay(true);
-                console.log('Connected');
 
                 const { statusCode, headers } = res;
                 //res.setEncoding('ascii');
-
-                console.log({ statusCode, headers });
+                this.emit('request', {statusCode, headers})
 
                 res.on('data', chunk => {
-                    callback(chunk, res);
+                    this.emit('data', chunk);
+                    //callback(chunk);
                 });
 
                 res.on('end', () => {
-                    this._connect = false;
+                    this.emit('end');
                     reslove();
                 });
             });
 
-            this.req.on('error', e => {
-                this.abort();
-                reject(e);
+            this.req.on('error', async err => {
+                await this.abort();
+                reject(err);
             });
 
             this.req.end();
         });
     };
 
-    abort = () => {
-        if (this.isConnected) {
-            this.req.abort();
-        }
-        this.req = null;
+    abort = (timeout = 1000) => {
+        return new Promise((reslove, reject) => {
+            if (this.isConnected) {
+                this.req.socket.destroy();
+                this.req.abort();
+                setTimeout(() => {
+                    this.req = null;
+                    this.emit('abort', true);
+                    reslove(true);
+                }, timeout);
+            } else {
+                this.req = null;
+                this.emit('abort', false);
+                reslove(false);
+            }
+        });
     };
 }
