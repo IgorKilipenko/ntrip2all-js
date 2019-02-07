@@ -9,7 +9,7 @@ class NtripProxyServer {
     }
 
     start = (ntripClient) => {
-        console.assert(ntripClient, "Client error", {ntripClientt});
+        console.assert(ntripClient, "Client error", {ntripClient});
 
         ntripClient.request()
 

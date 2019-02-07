@@ -168,7 +168,7 @@ export default class NtripClient extends EventEmitter {
 class Gpgga {
     constructor() {
         this.Identifier = '$GPGGA';
-        this.time = new Data().toTimeString();
+        this.time = (new Date()).toTimeString();
     }
 
     static gpggaReg = () =>
