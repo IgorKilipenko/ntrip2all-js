@@ -2,7 +2,7 @@ import http from 'http';
 import EventEmitter from 'events';
 
 export default class NtripClient extends EventEmitter {
-    constructor({ host, port, mountpoint, user, password, proxyserver, proxyport, mode = 'NTRIP2' } = {}) {
+    constructor({ host, port, mountpoint, user, password, proxyserver, proxyport, GPGGA, mode = 'NTRIP2' } = {}) {
         super();
         console.assert(host && port && mountpoint, 'NtripClient {arg: options} error', arguments[0]);
 
@@ -22,20 +22,25 @@ export default class NtripClient extends EventEmitter {
             user,
             password,
             proxyserver,
-            proxyport
+            proxyport,
+            GPGGA
+            //encoding: 'ascii'
         };
 
         this.options.headers = {
             'User-Agent': 'NTRIP ExampleClient/2.0',
             Connection: 'close',
-            Authorization: `Basic ${Buffer.from(this.options.user + ':' + this.options.password, 'ascii').toString('base64')}`
+            Authorization: `Basic ${Buffer.from(this.options.user + ':' + this.options.password, 'ascii').toString('base64')}`,
+            Accept: '*/*'
         };
 
         if (this.options.mode === 'NTRIP2') {
             this.options.headers['Ntrip-Version'] = 'Ntrip/2.0';
         }
 
-        console.assert(this.options.headers.Authorization === 'Basic c2JyNTAzNzo5NDAxNzI=', 'Password error encoding', this.options.headers.Authorization);
+        if (this.options.GPGGA){
+            this.options.headers["Ntrip-GGA"] = this.options.GPGGA;
+        }
     }
 
     get host() {
@@ -51,7 +56,7 @@ export default class NtripClient extends EventEmitter {
     }
 
     get isConnected() {
-        return this.req;
+        return this.req && this.req.connection && !this.req.aborted;
     }
 
     getInfo = () => {
@@ -70,23 +75,56 @@ export default class NtripClient extends EventEmitter {
                 await this.abort();
                 reslove({ statusCode, headers });
             });
-
-
         });
     };
 
-    request = callback => {
+    request = () => {
         return new Promise(async (reslove, reject) => {
-            this.req = http.request(this.options, res => {
+
+            this.req = http.request(this.options);
+            this.req.end();
+
+            this.req.once('response', res => {
+                console.log("Start request", {req:this.req});
                 this.req.setNoDelay(true);
 
                 const { statusCode, headers } = res;
                 //res.setEncoding('ascii');
-                this.emit('request', {statusCode, headers})
+                this.emit('response', { statusCode, headers }, res);
 
                 res.on('data', chunk => {
                     this.emit('data', chunk);
-                    //callback(chunk);
+                });
+
+                res.on('end', () => {
+                    this.emit('end');
+                    reslove();
+                });
+            });          
+
+            this.req.on('error', async err => {
+                await this.abort();
+                reject(err);
+            });
+        });
+    };
+
+    requestEx = () => {
+        return new Promise(async (reslove, reject) => {
+            this.req = http.request(this.options, res => {
+                console.log("Start request", {req:this.req});
+                this.req.setNoDelay(true);
+
+                //if (this.options.GPGGA) {
+                //    this.req.write('\r\n' + this.options.GPGGA + '\r\n');
+                //}
+
+                const { statusCode, headers } = res;
+                //res.setEncoding('ascii');
+                this.emit('response', { statusCode, headers }, res);
+
+                res.on('data', chunk => {
+                    this.emit('data', chunk);
                 });
 
                 res.on('end', () => {
@@ -94,13 +132,18 @@ export default class NtripClient extends EventEmitter {
                     reslove();
                 });
             });
+            if (this.options.GPGGA){
+                console.log(this.options.GPGGA)
+                this.req.end('\r\n'+ this.options.GPGGA + '\r\n', 'ascii');
+            }else{
+                this.req.end();
+            }
+            
 
             this.req.on('error', async err => {
                 await this.abort();
                 reject(err);
             });
-
-            this.req.end();
         });
     };
 
@@ -121,4 +164,13 @@ export default class NtripClient extends EventEmitter {
             }
         });
     };
+}
+class Gpgga {
+    constructor() {
+        this.Identifier = '$GPGGA';
+        this.time = new Data().toTimeString();
+    }
+
+    static gpggaReg = () =>
+        /^\$GP(\w{3}),(\d{6}([.]\d+)?),(\d{4}[.]\d+,[NS]),(\d{5}[.]\d+,[WE]),([0-8]),(\d{1,2}),(\d{1,3}[.]\d{1,3})?,([-]?\d+([.]\d+)?)?,M?,([-]?\d+([.]\d+)?)?,M?,(\d+([.]\d+)?)?,(\d{4})?,?([ADENS])?\*([0-9A-F]{2})$/;
 }
